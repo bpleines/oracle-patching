@@ -56,7 +56,7 @@ Don't run this in parallel! There should be two inventory subgroups for any patc
 
 <h2><u>Error Handling:</u></h2>
 There were 4 spots identified as high points of failure. These are wrapped in Ansible rescue blocks that send email notifications to {{ email_distribution_group }} based on a failure. High-failure of points include:
-ol>
+<ol>
 <li>The opatch utility upgrade failed (prep)</li>
 <li>There is a flagged one-off patch conflict that will interfere with patching (prep)</li>
 <li>The command 'opatch apply' failed (patching)</li>
@@ -67,5 +67,5 @@ ol>
 <br>
 
 <h2><u>Testing! A note to a future developer:</u></h2>
-IMPORTANT! Deprecation warnings are carefully suppressed in ansible.cfg, but the SUDO_EXE setting used with the Solaris /usr/local/bin/sudo location will be deprecated in Ansible v2.8.
+IMPORTANT! Deprecation warnings are suppressed in ansible.cfg, but the SUDO_EXE setting used with the Solaris /usr/local/bin/sudo location will be deprecated in Ansible v2.8.
 </body>
