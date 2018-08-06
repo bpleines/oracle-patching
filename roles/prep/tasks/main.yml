@@ -1,0 +1,403 @@
+---
+- name: "Prerequisite --- Check that supplied oracle_home_path ({{ oracle_home_path }}) exists - if not fail the play"
+  command: cd '{{ oracle_home_path }}'
+  changed_when: no
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Check that the required oracle patches ({{ opatch_latest_zip }}, {{ oneoff_latest_zip }}) exist on the system - if not fail the play"
+  file:
+    path: '{{ oracle_prep_patch_dir }}/{{ item }}'
+    state: file
+  with_items:
+    - '{{ opatch_latest_zip }}'
+    - '{{ oneoff_latest_zip }}'
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Check that python version ({{ ansible_python_version }}) >= v2.6 - if not fail the play"
+  fail: 
+    msg: "The version of python does not meet the minumum requirements (>= v2.6) to run this Ansible content"
+  when: ansible_python_version | version_compare(2.6, operator='<') == True
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Create the Ansible patching directory ({{ ansible_patches_dir }})"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ ansible_patches_dir }}'
+    state: directory
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Copy over the sid environment script to Ansible patching directory"
+  copy:
+    src: oracleSidEnvironment.sh
+    dest: '{{ ansible_patches_dir }}'
+    mode: "u+rwx,g+rwx,o+rwx"
+    owner: oracle
+    remote_src: no
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Fetch Oracle SIDs"
+  command: /bin/bash oracleSidEnvironment.sh
+  args:
+    chdir: '{{ ansible_patches_dir }}'
+  register: oracleSidList
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Dynamically add binary relevant database sids to a list to run post patching commands against"
+  set_fact:
+    DATABASE_SID: '{{ DATABASE_SID|default([]) + [ item | trim | binary_specific_database_oracle_sid ] }}'
+  when: oracle_binary_version in item and not 'set' in item
+  with_items:
+    - '{{ oracleSidList.stdout_lines }}'
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Set the minimum required opatch version for 11.2.0.4 binary patching"
+  set_fact:
+    minimum_required_opatch_version: 11.2.0.3.6
+  when: "oracle_binary_version | splitVersion == '11'"
+  tags:
+    - prerequisite
+    - prep
+
+#For provided p21948347_112040_SOLARIS64.zip
+- name: "Prerequisite --- Set the minimum required opatch version for 12.1.0.2 binary patching"
+  set_fact:
+    minimum_required_opatch_version: 12.1.0.1.7
+  when: "oracle_binary_version | splitVersion == '12'"
+  tags:
+    - prerequisite
+    - prep
+
+#Dependent on installation location of python
+- name: "Prerequisite --- Check for the existence of pexpect - if not fail the play"
+  command: "{{ ansible_python_interpreter }} -c 'import pexpect'"
+  changed_when: no
+  register: pexpect
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Prerequisite --- Warn that the email notification system for failures is not setup"
+  debug:
+    msg: "Set email_distribution_group and email_server to enabled email notification failure for oracle patching"
+  when: email_distribution_group is undefined or email_server is undefined
+ 
+- name: "Step 1 --- Check for presence of required scripts - if not present fail the play"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ oracle_prep_patch_dir }}/{{ item }}'
+    state: 'file'
+  with_items:
+    - 'gen_freeze_db.sh'  
+    - 'gen_list_invalid_objects.sh'  
+    - 'gen_list_utl_privs.sh'  
+    - 'gen_run_utlrp.sh'  
+    - 'gen_shutdown_db.sh'  
+    - 'invalid_objects_after.sql'  
+    - 'invalid_objects_before.sql'    
+    - 'utl_privs_after.sql' 
+    - 'utl_privs_before.sql'
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Step 1 --- Check for presence of known files and scripts - copy them to the Ansible patching directory"
+  copy:
+    src: '{{ oracle_prep_patch_dir }}/{{ item }}'
+    dest: '{{ ansible_patches_dir }}'
+    mode: "u+rwx,g+rwx,o+rwx"
+    owner: oracle
+    remote_src: yes
+  with_items:
+    - 'gen_freeze_db.sh'
+    - 'gen_list_invalid_objects.sh'
+    - 'gen_list_utl_privs.sh'
+    - 'gen_run_utlrp.sh'
+    - 'gen_shutdown_db.sh'
+    - 'invalid_objects_after.sql'
+    - 'invalid_objects_before.sql'
+    - 'utl_privs_after.sql'
+    - 'utl_privs_before.sql'
+    - '{{ opatch_latest_zip }}'
+    - '{{ oneoff_latest_zip }}'
+  tags:
+    - prerequisite
+    - prep
+
+- name: "Step 1 --- Make sure all the patching software is downloaded and available in ({{ oracle_prep_patch_dir }}) "
+  command: ls -l {{ oracle_prep_patch_dir }}
+  register: oracle_prep_patch_dir_content
+  changed_when: no
+  tags:
+    - prep
+
+- name: "Step 1 --- Make sure all the patching software is downloaded and available in ({{ ansible_patches_dir }}) "
+  command: ls -l {{ ansible_patches_dir }}
+  register: oracle_ansible_patches_dir_content
+  changed_when: no
+  tags:
+    - prep
+  
+- name: "Step 2 --- Print the Ansible variables for Oracle Binary Version and Oracle Home Path"
+  debug:
+    msg: '{{ item }}' 
+  with_items:
+    - '"The entered Oracle Binary Version is {{ oracle_binary_version }}"'
+    - '"The entered Oracle Home Path is {{ oracle_home_path }}"'
+  tags:
+    - debug
+    - prep
+
+- name: "Step 3a --- Print the environment variable Oracle Home Path"
+  shell: 'echo $ORACLE_HOME'
+  changed_when: no
+  tags:
+    - debug
+    - prep
+  
+- name: "Step 3b --- Generate the script for all matching ({{ oracle_binary_version }}) databases in the environment"
+  command: "'{{ ansible_patches_dir }}'/gen_run_utlrp.sh {{ oracle_home_path }} {{ oracle_binary_version_int }}"
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+    
+- name: "Step 3b --- Run the utlrp on all databases"
+  file:
+    path: "{{ oracle_script_prep }}/run_utlrp_{{ oracle_binary_version_int }}.sh"
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+  tags:
+    - prep
+    
+- name: "Step 3c --- File properties sanity check"
+  command: ls -l run_utlrp_{{ oracle_binary_version_int }}.sh
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  changed_when: no
+  tags:
+    - debug
+    - prep
+
+- name: "Step 3c --- Do some debugging"
+  shell: 'echo {{ item }}'
+  changed_when: no
+  with_items:
+    - '$ORACLE_SID'
+    - '$ORACLE_HOME'
+  tags:
+    - debug
+    - prep
+  
+- name: "Step 3c --- Run the utlrp on all databases"
+  command: /bin/bash "run_utlrp_{{ oracle_binary_version_int }}.sh"
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+  
+- name: "Step 4a --- Obtain list of invalid objects for each database running on the specified ORACLE_HOME prior to patching binaries"
+  command: "{{ ansible_patches_dir }}/gen_list_invalid_objects.sh {{ oracle_home_path }} {{ oracle_binary_version_int }}"
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+  
+- name: "Step 4b --- Generate the list of invalid objects"
+  file:
+    path: "{{ oracle_script_prep }}/invalid_objects_{{ oracle_binary_version_int }}.sh"
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx" 
+  tags:
+    - prep
+  
+- name: "Step 4b --- Generate the list of invalid objects"
+  command: /bin/bash "invalid_objects_{{ oracle_binary_version_int }}.sh"
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+  
+- name: "Step 5a --- Generate a script to list all privileges granted to UTL packages for each database running on specified ORACLE_HOME. It will create the script utl_privs_oracle_binary_version_int"
+  command: "{{ ansible_patches_dir }}/gen_list_utl_privs.sh {{ oracle_home_path }} {{ oracle_binary_version_int }}"
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+  
+- name: "Step 5b --- Generate the list of privileges granted to UTL packages. The list of privileges will be placed in opt/ora/app/oracle/admin/<db>/adhoc -- directory for each database."
+  file:
+    path: "{{ oracle_script_prep }}/utl_privs_{{ oracle_binary_version_int }}.sh"
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+  tags:
+    - prep
+  
+- name: "Step 5b --- Generate the list of privileges granted to UTL packages. The list of privileges will be placed in opt/ora/app/oracle/admin/<db>/adhoc -- directory for each database."
+  command: /bin/bash 'utl_privs_{{ oracle_binary_version_int }}.sh'
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - prep
+  
+#This is set as a variable as of now - can ultimately be included as a survey
+- name: "Step 6 --- Print the value of the minimum required OPatch version specified"
+  debug:
+    msg: "The value of the minimum required OPatch version is {{ minimum_required_opatch_version }}"
+  tags:
+    - debug
+    - prep
+     
+- name: "Step 6a --- Check the current value for $PATH before resetting it"
+  shell: 'echo $PATH'
+  changed_when: no
+  tags:
+    - debug
+    - prep
+
+- name: "Step 6 --- Find the OPatch directory"
+  file: 
+    path: '{{ oracle_home_path }}/OPatch'
+    state: directory
+  register: opatch_dir_check
+  changed_when: no
+  tags:
+    - prep
+
+- name: "Step 6a --- Check the system version of OPatch"
+  command: 'opatch version'
+  register: system_opatch_version
+  when: opatch_dir_check|success
+  tags:
+    - prep
+    
+- name: "Step 6a --- Parse system_opatch_version output register to contain only necessary characters"
+  set_fact:
+    system_opatch_version: '{{ system_opatch_version.stdout_lines[0] | replace("OPatch Version: ", "") }}'
+  tags:
+    - prep
+    
+- name: "Step 6a --- Print the value of the minimum required OPatch version, again"
+  debug:
+    msg: "The value of the minimum required OPatch version is {{ minimum_required_opatch_version }}"
+  tags:
+    - debug
+    - prep
+     
+- name: "Step 6a --- Print the parsed system value of OPatch version"
+  debug:
+    msg: "The systems's value of the OPatch version is {{ system_opatch_version }}"
+  tags:
+    - debug
+    - prep
+  
+- block:
+    - name: "Step 6a --- Install the latest OPatch ({{ opatch_latest_zip }})"
+      copy:
+        src: '{{ ansible_patches_dir }}/{{ opatch_latest_zip }}'
+        dest: '{{ oracle_home_path }}'
+    - name: "Step 6a --- Install the latest OPatch ({{ opatch_latest_zip }})"
+      expect:
+        command: unzip '{{ opatch_latest_zip }}'
+        chdir: '{{ oracle_home_path }}'
+        responses:
+          replace: 'A'
+    - name: "Step 6a --- Install the latest OPatch ({{ opatch_latest_zip }})"
+      file: 
+        path: '{{ oracle_home_path }}/{{ opatch_latest_zip }}'
+        state: absent
+  when: "pexpect|succeeded and system_opatch_version | version_compare(minimum_required_opatch_version, operator='<') == True"
+  rescue:
+    - name: "Rescue --- Inform {{ email_distribution_group }} of a failed attempt at installing the minimum required opatch version on {{ ansible_hostname }}"
+      mail:
+        subject: "Ansible Oracle Patching failed on {{ ansible_fqdn }} (Job #{{ tower_job_id }})"
+        host: '{{ email_server }}'
+        body: 'Applying {{ opatch_latest_zip }} failed. The system opatch utility was not upgraded to the minimum required utility version. Please remediate and rerun the Ansible content.'
+        from: AUTOMATED_TOWER_NOTIFICATION@ansible.com
+        to: '{{ email_distribution_group }}'
+      become: false
+      delegate_to: "{{ groups['tower_server'][0] }}"
+    - name: "Rescue --- Intentionally fail the play"
+      fail:
+        msg: 'Updating the opatch version to the minimum required version failed. {{ email_distribution_group }} has been notified for further investigation.'  
+  tags:
+    - prep
+     
+- name: "Step 6b --- Obtain the list of patches installed in current $ORACLE_HOME"
+  command: opatch lsinventory
+  args:
+    chdir: '{{ oracle_home_path }}/OPatch'
+  when: "oracle_binary_version | splitVersion == '11'"
+  tags:
+    - prep
+
+- name: "List inventory"
+  command: opatch lsinventory
+  args:
+    chdir: /opt/ora/app/oracle
+  when: "oracle_binary_version | splitVersion == '12'"
+  tags:
+    - prep
+    - 12102
+    
+- name: "Step 7 --- Verify replace filter works as expected"
+  debug:
+    msg: '{{ item }}'
+  with_items:
+    - "The value of oneoff_latest_zip is: '{{ oneoff_latest_zip }}'"
+    - "The value of oneoff_patch_dir is: '{{ oneoff_patch_dir }}'"
+    - "The value of oneoff_patch_dir_int is: '{{ oneoff_patch_dir_int }}'"
+  tags:
+    - debug
+    - prep
+  
+#Using absolute paths because documentation has several manual directory changes to keep track of
+- block:
+    - name: "Step 7 --- Check for one-off patch conflicts"
+      file:
+        path: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}'
+        state: directory
+    - name: "Step 7 --- Check for one-off patch conflicts"
+      copy: 
+        src: '{{ ansible_patches_dir }}/{{ oneoff_latest_zip }}'
+        dest: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}'
+    - name: "Step 7 --- Check for one-off patch conflicts"
+      unarchive: 
+        src: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}/{{ oneoff_latest_zip }}'
+        dest: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}'
+        list_files: yes
+        remote_src: yes
+    - name: "Step 7 --- Check for one-off patch conflicts"
+      command: 'opatch prereq CheckConflictAgainstOHWithDetail -ph ./'
+      args:
+        chdir: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}/{{ oneoff_patch_dir_int }}'
+  rescue:
+    - name: "Rescue --- Inform {{ email_distribution_group }} of One-off patch conflicts that must be remedied prior to patching on {{ ansible_hostname }}"
+      mail:
+        subject: "Ansible Oracle Patching failed on {{ ansible_fqdn }} (Job #{{ tower_job_id }})"
+        host: '{{ email_server }}'
+        body: 'One-off patch conflicts will prevent Ansible from patching {{ oracle_home_path }}. Please download the appropriate One-off conflict patches and rerun the Ansible content once the conflicts have been resolved.'
+        from: AUTOMATED_TOWER_NOTIFICATION@ansible.com
+        to: '{{ email_distribution_group }}'
+      become: false
+      delegate_to: "{{ groups['tower_server'][0] }}"
+    - name: "Rescue --- Intentionally fail the play"
+      fail:
+        msg: 'One-off patch conflicts will prevent the patching process. {{ email_distribution_group }} has been notified for further investigation.'  
+  tags:
+    - prep

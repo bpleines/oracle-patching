@@ -1,0 +1,120 @@
+---
+- name: "Create temporary directory to copy scripts to"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ ansible_patches_dir }}'
+    state: directory
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+
+- name: "Copy statup and shutdown db scripts"
+  copy:
+    src: '{{ item }}'
+    dest: '{{ ansible_patches_dir }}'
+    mode: "u+rwx,g+rwx"
+    owner: oracle
+  with_items:
+    - stopDatabaseImmediate.sh
+    - startDatabase.sh
+  tags:
+    - 12102
+
+- name: "Set Oracle Home Path"
+  set_fact:
+    oracle_home_path: "/opt/ora/app/oracle/product/12.1.0.2"
+
+#Ignore_errors set in case it is already stopped
+- name: "Stop the listener"
+  shell: '{{ oracle_home_path }}/bin/lsnrctl stop LISTENER12'
+  environment:
+    ORACLE_SID: ansibl12
+    TNS_ADMIN: /opt/ora/app/oracle/product/12.1.0.2/network/admin
+  ignore_errors: true
+  tags:
+    - 12102
+
+- name: "Stop the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/stopDatabaseImmediate.sh
+  environment:
+    ORACLE_SID: ansibl12
+    TNS_ADMIN: /opt/ora/app/oracle/product/12.1.0.2/network/admin
+  tags:
+    - 12102
+
+- name: "Remove existing 12.1.0.2 binaries"
+  command: rm -rf 12.1.0.2
+  args:
+    chdir: /opt/ora/app/oracle/product
+  tags:
+    - 12102
+
+- name: "Replace existing 12.1.0.2 binaries"
+  command: tar -xvf oracle12102_July2016PSU.tar
+  args:
+    chdir: /home/orabackup/12.1.0.2/ANSIBLE
+  tags:
+    - 12102
+
+- name: "Install as root"
+  command: /bin/bash root.sh
+  args:
+    chdir: /opt/ora/app/oracle/product/12.1.0.2
+  become: true
+  become_user: root
+  tags:
+    - 12102
+
+#Sreedghar suggested that these steps shouldn't affect my testing
+- name: "Replace Oracle Inventory"
+  command: rm -rf oraInventory
+  args:
+    chdir: /opt/ora/app/oracle/
+
+- name: "Replace Oracle Inventory"
+  command: tar -xvf oraInventory_113017_with12cDB.tar
+  args:
+    chdir: /opt/ora/app/oracle/
+
+- name: "List inventory"
+  command: opatch lsinventory
+  args:
+    chdir: /opt/ora/app/oracle
+  tags:
+    - 12102
+
+- name: "Remove ansibl12 db"
+  command: rm -rf ansibl12
+  args:
+    chdir: /data/oradata
+  tags:
+    - 12102
+
+- name: "Unpackage tarred ansibl12 binaries"
+  command: tar -xvf ansibl12_dbbackup_11302017.tar
+  args:
+    chdir: /home/orabackup/12.1.0.2/ANSIBLE
+  tags:
+    - 12102
+
+- name: "Start the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/startDatabase.sh
+  environment:
+    ORACLE_SID: ansibl12
+  tags:
+    - 12102
+
+- name: "Start the listener"
+  shell: $ORACLE_HOME/bin/lsnrctl start LISTENER12
+  environment:
+    ORACLE_SID: ansibl12
+    TNS_ADMIN: /opt/ora/app/oracle/product/12.1.0.2/network/admin
+  tags:
+    - 12102
+
+- name: "Cleanup temporary script directory"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ ansible_patches_dir }}'
+    state: absent
+  tags:
+    - 12102

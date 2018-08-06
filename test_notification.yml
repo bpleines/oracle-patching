@@ -1,0 +1,16 @@
+---
+- name: "This is a test of the email notification system"
+  hosts: oracle_patching
+  become: yes
+  become_user: oracle
+  tasks:
+    - name: "Step 14 --- Inform {{ email_distribution_group }} of a failed attempt at patching oracle binaries on {{ ansible_hostname }}"
+      mail:
+        subject: "Email notification system working from {{ ansible_hostname }}"
+        host: '{{ email_server }}'
+        body: "Email notification system verified"
+        from: AUTOMATED_TOWER_NOTIFICATION@ansible.com
+        to: '{{ email_distribution_group }}'
+      become: no
+      delegate_to: "{{ groups['tower_server'][0] }}"
+...

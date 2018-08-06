@@ -1,0 +1,216 @@
+---
+- name: "Step 8 --- Make sure ORACLE_HOME is set to correct binaries"
+  shell: echo $ORACLE_HOME
+  changed_when: no
+  tags:
+    - debug
+    - patching 
+
+#Discuss Veritas Cluster identification --- apply to all of step 9?
+#- block:    
+#  - name: "Step 9a --- Generate the list of databases to freeze. This script will create the script freeze_db.sh in ({{ oracle_script_prep }})"
+#    command: '{{ ansible_patches_dir }}/gen_freeze_db.sh {{ oracle_home_path }}'
+#    args:
+#      chdir: '{{ oracle_script_prep }}'
+#  - name: "Step 9b --- Freeze the cluster for the specified database"
+#    file:
+#      path: "{{ oracle_script_prep }}/freeze_db.sh"
+#      owner: oracle
+#      mode: "u+rwx,g+rwx" 
+#  - name: "Step 9b --- Freeze the cluster for the specified database"
+#    command: /bin/bash 'freeze_db.sh'
+#    args:
+#      chdir: '{{ oracle_script_prep }}'
+#  when: '{{ vcs_cluster }} == True'
+#  tags:
+#    - patching
+
+- name: "Step 10 --- Disable crontab if not already disabled"
+  shell: 'crontab -l > crontab.save ; crontab -r'
+  args:
+    chdir: '/opt/ora/app/oracle/crontab'
+  tags:
+    - patching
+
+- name: "Step 11 --- Identify all of the running listeners"
+  shell: ps -ef | grep lsnr
+  changed_when: no
+  register: listenerOutput
+  tags:
+    - patching
+   
+- name: "Step 11 --- Make sure the directory for the listeners filedrop exists"
+  file:
+    path: '{{ listener_file_path }}'
+    state: directory
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+  tags:
+    - debug
+    - patching
+   
+- name: "Step 11 --- Create a file to contain the binary specific SID(s) to iterate over"
+  file:
+    path: '{{ listener_file_path }}/listenerFile.txt'
+    state: '{{ item }}'
+    owner: oracle
+  with_items:
+    - absent
+    - touch
+  tags:
+    - debug
+    - patching
+
+- name: "Step 11 --- Testing trim of stdout_lines for listenerOutput"
+  shell: echo '{{ item | trim }}'
+  changed_when: no
+  with_items:
+    - '{{ listenerOutput.stdout_lines }}'
+  tags:
+    - debug
+    - patching
+    
+- name: "Step 11 --- Add the lsnr output content to listenerFile.txt"
+  lineinfile:
+    #path does not work in Ansible < v2.3
+    dest: '{{ listener_file_path }}/listenerFile.txt'
+    line: '{{ item | trim | binary_specific_oracle_sid }}'
+  when: oracle_binary_version in item and not(('secora' or 'oitora') in item)
+  with_items:
+    - '{{ listenerOutput.stdout_lines }}'
+  tags:
+    - debug
+    - patching
+  
+- name: "Step 11 --- Dynamically add binary relevant listener sids to a list that is looped through to stop and start relevant listeners"
+  #This fact will be initialized as null if no SIDs are applicable - tasks that rely on this dictionary may be autoskipped
+  set_fact: 
+    ORACLE_LISTENER_SID: '{{ ORACLE_LISTENER_SID|default([]) + [ item | trim | binary_specific_oracle_sid ] }}'
+  when: oracle_binary_version in item and not(('secora' or 'oitora') in item)
+  with_items:
+    - '{{ listenerOutput.stdout_lines }}'
+  tags:
+    - patching
+    
+- name: "Step 11 --- Debug dynamically added sid fact"
+  debug:
+    msg: "ORACLE_LISTENER_SID: '{{ ORACLE_LISTENER_SID|default([]) }}'"
+  tags:
+    - debug
+    - patching
+
+- name: "Step 11 --- Include stopListeners to loop over {{ oracle_binary_version }} listeners"
+  include_tasks: stopListeners.yml
+  with_items:
+    - '{{ ORACLE_LISTENER_SID|default([]) }}'
+  tags:
+    - patching
+    
+- name: "Step 12a --- Generate a script to shutown all databases running on {{ oracle_home_path }}. This will create the script shutdown_db.sh in {{ oracle_script_prep }}"
+  command: '{{ ansible_patches_dir }}/gen_shutdown_db.sh {{ oracle_home_path }} {{ oracle_binary_version_int }}'
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - patching
+
+- name: "Step 12b --- Shutdown the databases"
+  file:
+    path: "{{ oracle_script_prep }}/shutdown_db_{{ oracle_binary_version_int }}.sh"
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+  tags:
+    - patching
+
+- name: "Step 12b --- Shutdown the databases"
+  command: /bin/bash 'shutdown_db_{{ oracle_binary_version_int }}.sh'
+  args:
+    chdir: '{{ oracle_script_prep }}'
+  tags:
+    - patching
+  
+- name: "Step 13 --- Print the value of the minimum desired OPatch version"
+  debug:
+    msg: "The value of the minimum required OPatch version is {{ minimum_required_opatch_version }}"
+  tags:
+    - debug
+    - patching
+     
+- name: "Step 13 --- Find the OPatch directory"
+  command: cd '{{ oracle_home_path }}/OPatch'
+  register: opatch_dir_check
+  changed_when: no
+  tags:
+    - debug
+    - patching
+    
+# Step 13 --- Exported OPatch $PATH is handled in environment variable declaration
+- name: "Step 14 --- Make sure ORACLE_HOME is set to correct binaries"
+  shell: 'echo {{ item }}'
+  changed_when: no
+  with_items:
+    - $ORACLE_HOME
+    - $PATH
+  tags:
+    - debug
+    - patching
+ 
+- block:
+    - name: "Step 14 --- Installing Quarterly Security Patch ({{ oneoff_patch_dir_int }})"
+      expect:
+        command: 'opatch apply'
+        chdir: '{{ oracle_home_path }}/patches/{{ oneoff_patch_dir }}/{{ oneoff_patch_dir_int }}'
+        responses:
+          (?i)Email: ''
+          (?i)uninformed: 'Y'
+          (?i)proceed: 'y'
+          (?i)patching: 'y'
+      register: opatchOutput
+      when: pexpect|succeeded
+  rescue: 
+    - name: "Rescue --- set a fact with the opatchlog location"
+      set_fact:
+        opatch_log_location: '{{ item | opatchLog | trim | replace("\r\n\r\n", "") }}'
+      with_items:
+        - '{{ opatchOutput.stdout }}'
+    - name: "Rescue --- truncate fact to just the filename"
+      set_fact:
+        opatch_log_file: '{{ opatch_log_location | replace("/opt/ora/app/oracle/product/11.2.0.4/cfgtoollogs/opatch/","") }}'
+      when: "oracle_binary_version | splitVersion == '11'" 
+    - name: "Rescue --- truncate fact to just the filename"
+      set_fact:
+        opatch_log_file: '{{ opatch_log_location | replace("/opt/ora/app/oracle/product/12.1.0.2/cfgtoollogs/opatch/","") }}'
+      when: "oracle_binary_version | splitVersion == '12'"
+    
+    - name: "Rescue --- Inform {{ email_distribution_group }} of a failed attempt at patching oracle binaries on {{ ansible_hostname }}"
+      mail:
+        subject: "Ansible Oracle Patching failed to patch {{ oracle_home_path }} on {{ ansible_fqdn }} (Job #{{ tower_job_id }})"
+        host: '{{ email_server }}'
+        body: "Executing 'opatch apply' failed. Please remediate issues logged at ({{ opatch_log_file }} ) and rerun the patching content."
+        from: AUTOMATED_TOWER_NOTIFICATION@ansible.com
+        to: '{{ email_distribution_group }}'
+      become: false
+      delegate_to: "{{ groups['tower_server'][0] }}" 
+    - name: "Rescue -- Intentionally fail the play"
+      fail:
+        msg: 'The opatch apply command failed - the relevant opatch logs have been emailed to {{ email_distribution_group }} for further investigation.'
+  tags:
+    - patching      
+
+#Note: Apply One-off conflicting patches, if applicable . (FROM STEP 7)
+#Steps for patching the one-off usually are same as Binary Patching - depends on each patch
+- name: "Step 15 --- Verify all patches have been applied successfully"
+  expect:
+    command: 'opatch lsinventory'
+    chdir: '{{ oracle_home_path }}/OPatch'
+    responses:
+      (?i)proceed: 'y'
+  when: pexpect|succeeded
+  tags:
+    - patching
+
+- name: "Step 16 --- Include startListeners to loop over ({{ oracle_binary_version }}) listeners"
+  include_tasks: startListeners.yml
+  with_items:
+    - '{{ ORACLE_LISTENER_SID|default([]) }}'
+  tags:
+    - patching

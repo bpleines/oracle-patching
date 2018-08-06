@@ -1,0 +1,33 @@
+---
+#important connection related variable for Solaris
+ansible_python_interpreter: /usr/bin/python
+
+#The commented variables can be consumed as part of a Tower survey
+#The playbook will quickly fail if they are not defined
+oracle_binary_version: 11.2.0.4
+#opatch_latest_zip: p6880880_112000_SOLARIS64.zip
+#oneoff_latest_zip: p21948347_112040_SOLARIS64.zip
+#You can find this in the README.md of the patch
+#patch_identifier: 'PSU ...'
+
+#These variabless need to be set for the email system to work
+#e.g. ansible_notification_group@ansible.com
+#email_distribution_group: ''
+#e.g. ansible.prod
+#email_server: ''
+
+#These variables should stay consistent but are used widely enough to be variablized
+oracle_home_path: /opt/ora/app/oracle/product/{{ oracle_binary_version }}
+oracle_prep_patch_dir: /home/oracle/Patching
+ansible_patches_dir: /home/oracle/Ansible
+oracle_script_prep: /var/opt/oracle
+
+#These variables are derived from other varaibles
+oracle_binary_version_int: '{{ oracle_binary_version | replace(".", "") }}'
+opatch_version_int: '{{ opatch_version | replace(".", "") }}'
+oneoff_patch_dir:  '{{ oneoff_latest_zip | splitUnderscore }}'
+oneoff_patch_dir_int: '{{ oneoff_patch_dir | replace("p", "", 1) }}'
+listener_file_path: '{{ oracle_script_prep }}/listenerOutput'
+
+#Removed variables
+#vcs_cluster: False

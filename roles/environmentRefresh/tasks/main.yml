@@ -1,0 +1,26 @@
+---
+- name: "Refresh the 11.2.0.4 environment"
+  include_tasks: refresh11204.yml
+  environment:
+    ORACLE_HOME: '/opt/ora/app/oracle/product/11.2.0.4'
+  tags:
+    - 11204
+
+- name: "Oracle binary version"
+  set_fact:
+    oracle_binary_version: 12.1.0.2
+
+- name: "Oracle home path"
+  set_fact:
+    oracle_home_path: '/opt/ora/app/oracle/product/{{ oracle_binary_version }}'
+
+- name: "Refresh the 12.1.0.2 environment"
+  include_tasks: refresh12102.yml
+  environment:
+    ORACLE_HOME: '{{ oracle_home_path }}'
+    PATH: '{{ oracle_home_path }}/OPatch:/opt/ora/app/oracle:.:/bin:/usr/ccs/bin:/usr/bin:/usr/sbin:/usr/ucb:/usr/openwin/bin:/usr/local/bin:/opt/ora/app/oracle/lbin:/opt/ora/app/oracle/product/{{ oracle_binary_version }}/bin:/opt/ora/app/oracle/product/{{ oracle_binary_version }}/bin:/usr/local/bin/perl:/home/ORADBA/local_bin:/usr/local/sbin'
+    ORACLE_BASE: '/opt/ora/app/oracle'
+    LD_LIBRARY_PATH: '/usr/lib:/opt/ora/app/oracle/product/{{ oracle_binary_version }}/lib:/usr/dt/lib:/usr/ucblib'
+    ORAENV_ASK: 'NO'
+  tags:
+    - 12102

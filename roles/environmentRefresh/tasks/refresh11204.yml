@@ -1,0 +1,95 @@
+---
+- name: "Create temporary directory to copy scripts to"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ ansible_patches_dir }}'
+    state: directory
+    owner: oracle
+    mode: "u+rwx,g+rwx,o+rwx"
+
+- name: "Copy statup and shutdown db scripts"
+  copy:
+    src: '{{ item }}'
+    dest: '{{ ansible_patches_dir }}'
+    mode: "u+rwx,g+rwx"
+    owner: oracle
+  with_items:
+    - stopDatabase.sh
+    - startDatabase.sh
+
+- name: "Set Oracle Home Path"
+  set_fact:
+    oracle_home_path: '/opt/ora/app/oracle/product/11.2.0.4'
+
+- name: "Stop the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/stopDatabase.sh
+  environment: 
+    ORACLE_SID: ansbldev
+
+- name: "Stop the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/stopDatabase.sh
+  environment: 
+    ORACLE_SID: ansbldv1
+
+- name: "Remove existing binaries"
+  command: rm -rf 11.2.0.4
+  args:
+    chdir: /opt/ora/app/oracle/product
+  
+- name: "Unpackage tarred binaries"
+  command: tar -xvf /home/orabackup2/11.2.0.4/ANSIBLE/ANSIBLE_11204_09252017.tar
+  args:
+    chdir: /opt/ora/app/oracle/product
+
+- name: "Install as root"
+  command: /bin/bash root.sh
+  args:
+    chdir: /opt/ora/app/oracle/product/11.2.0.4
+  become: true
+  become_user: root
+
+- name: "Remove oracle inventory"
+  command: rm -rf oraInventory
+  args:
+    chdir: /opt/ora/app/oracle/
+
+- name: "Unpackage tarred inventory"
+  command: tar -xvf /home/orabackup2/11.2.0.4/ANSIBLE/ANSIBLE_OraInv_09252017.tar
+  args:
+    chdir: /opt/ora/app/oracle/
+
+- name: "Remove ansbldev db"
+  command: rm -rf ansbldev
+  args:
+    chdir: /data/oradata
+
+- name: "Unpackage tarred ansbldev binaries"
+  command: tar -xvf /home/orabackup2/11.2.0.4/ANSIBLE/ansbldev_09252017.tar
+  args:
+    chdir: /data/oradata
+
+- name: "Remove ansbldv db"
+  command: rm -rf ansbldv1
+  args:
+    chdir: /data/oradata
+
+- name: "Unpackage tarred ansbldv1 binaries"
+  command: tar -xvf /home/orabackup2/11.2.0.4/ANSIBLE/ansbldv1_09252017.tar
+  args:
+    chdir: /data/oradata
+
+- name: "Start the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/startDatabase.sh
+  environment: 
+    ORACLE_SID: ansbldev
+
+- name: "Start the database"
+  command: /bin/bash '{{ ansible_patches_dir }}'/startDatabase.sh
+  environment: 
+    ORACLE_SID: ansbldv1
+
+- name: "Cleanup temporary script directory"
+  file:
+    #path instead of src required pre v2.3
+    path: '{{ ansible_patches_dir }}'
+    state: absent

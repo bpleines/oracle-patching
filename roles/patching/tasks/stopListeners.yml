@@ -1,0 +1,15 @@
+---
+- name: "Step 11 --- Stop the named listeners from the {{ oracle_binary_version }} home"
+  command: '{{ oracle_home_path }}/bin/lsnrctl stop {{ item }}'
+  when: "oracle_binary_version | splitVersion == '11'"
+  tags:
+    - patching
+
+- name: "Step 11 --- Stop the named listeners from the {{ oracle_binary_version }} home"
+  command: '{{ oracle_home_path }}/bin/lsnrctl stop {{ item }}'
+  environment:
+    TNS_ADMIN: /opt/ora/app/oracle/product/12.1.0.2/network/admin
+  when: "oracle_binary_version | splitVersion == '12'"
+  tags:
+    - patching
+

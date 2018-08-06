@@ -1,0 +1,4 @@
+[oracle_patching]
+
+[tower_server]
+localhost ansible_user=awx

@@ -1,0 +1,199 @@
+---
+- name: "Debug database list for post rerun"
+  debug:
+    msg: '{{ DATABASE_SID }}'
+  tags:
+    - post
+
+- name: "Step 17 --- Set the Oracle environment for databases you are working on"
+  shell: '. oraenv'
+  tags:
+    - debug
+    - post
+
+- name: "Step 17 --- Make sure $ORACLE_HOME, $ORACLE_SID, $LD_LIBRARY_PATH are set correctly"
+  command: echo '{{ item }}'
+  changed_when: no
+  with_items:
+    - $ORACLE_HOME
+    - $ORACLE_SID
+    - $LD_LIBRARY_PATH
+  tags: 
+    - post
+
+- block:
+    - name: "Step 18 --- ORACLE_MAJOR_VERSION 11 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      copy:
+        src: catbundleStep18.sh
+        dest: '{{ ansible_patches_dir }}'
+        mode: "u+rwx,g+rwx,o+rwx"
+        owner: oracle
+        remote_src: no
+      tags:
+        - post
+    - name: "Step 18 --- ORACLE_MAJOR_VERSION 11 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      command: /bin/bash '{{ ansible_patches_dir }}/catbundleStep18.sh'
+      register: catbundleApply
+      args:
+        chdir: '{{ oracle_home_path }}/rdbms/admin'
+      tags:
+        - post
+  when: "oracle_binary_version | splitVersion == '11'"
+
+- block:
+    - name: "Step 18 --- ORACLE_MAJOR_VERSION 12 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      copy:
+        src: '{{ item }}'
+        dest: '{{ ansible_patches_dir }}'
+        mode: "u+rwx,g+rwx,o+rwx"
+        owner: oracle
+        remote_src: no
+      with_items:
+        - startup12cStep18.sh
+        - datapatchStep18.sh
+      tags:
+        - post
+    - name: "Step 18 --- ORACLE_MAJOR_VERSION 12 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      command: /bin/bash '{{ ansible_patches_dir }}/startup12cStep18.sh'
+      args:
+        chdir: '{{ oracle_home_path }}/rdbms/admin'
+      tags:
+        - post
+    - name: "Step 18 --- ORACLE MAJOR VERSION 12 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      command: '{{ oracle_home_path }}/OPatch/datapatch -verbose'
+      register: datapatchVerbose
+      args:
+        chdir: '{{ oracle_home_path }}/OPatch'
+      tags:
+        - post
+    - name: "Step 18 --- ORACLE MAJOR VERSION 12 --- Once the environment is set log into each database using sqlplus to run the following sql scripts"
+      command: /bin/bash '{{ ansible_patches_dir }}/datapatchStep18.sh'
+      register: datapatchApply
+      args:
+        chdir: '{{ oracle_home_path }}/OPatch'
+      tags:
+        - post
+  when: "oracle_binary_version | splitVersion == '12'"
+
+- block:
+    - name: "Step 18 --- Verify that ({{ patch_identifier }}) is in one of the rows"
+      fail:  
+        msg: '{{ patch_identifier }} is not in one of the rows'
+      changed_when: no
+      when: oracle_binary_version | splitVersion == '11' and not(patch_identifier in catbundleApply.stdout) and not(patch_identifier in datapatchApply.stdout)
+    - name: "Step 18 --- Verify that ({{ patch_identifier }}) is in one of the rows"
+      fail:
+        msg: '{{ patch_identifier }} is not in one of the rows'
+      changed_when: no
+      when: oracle_binary_version | splitVersion == '12' and not(patch_identifier in datapatchApply.stdout)
+  rescue:
+    - name: "Rescue --- Inform {{ email_distribution_group }} of strange patching behavior on {{ ansible_hostname }}"
+      mail:
+        subject: "Ansible Oracle Patching failed on {{ ansible_hostname }} (Job #{{ tower_job_id }})"
+        host: '{{ email_server }}'
+        body: 'Patch identifier ({{ patch_identifier }}) should be present in either dba_registry_history or dba_registry_sqlpatch. The binaries at ({{ oracle_home_path }}) have already been patched so please investigate any issues and rerun the patching content if applicable.'
+        from: AUTOMATED_TOWER_NOTIFICATION@ansible.com
+        to: '{{ email_distribution_group }}'
+      become: false
+      delegate_to: "{{ groups['tower_server'][0] }}"
+    - name: "Rescue --- Intentionally fail the play"
+      fail:
+        msg: 'A known patch identifer is missing for a database that was supposed to be patched by Ansible. {{ email_distribution_group }} has been notified for further investigation.'
+  tags:
+    - post
+    
+- block:
+    #APPLY Steps
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: 'ls -rt | grep -i $ORACLE_SID"_APPLY" | tail -1'
+      register: apply_verification
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: 'ls -rt | grep -i $ORACLE_SID"_APPLY" | tail -1 | xargs -i grep -i ora- {} | sort -u'
+      register: sorted_apply_verification
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: cat '{{ item }}'
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'
+      with_items:
+        - '{{ apply_verification.stdout_lines | default([]) }}'
+    #GENERATE Steps
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: 'ls -rt | grep -i $ORACLE_SID"_GENERATE" | tail -1'
+      register: generate_verification
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: 'ls -rt | grep -i $ORACLE_SID"_GENERATE" | tail -1 | xargs -i grep -i ora- {} | sort -u'
+      register: sorted_generate_verification
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'   
+    - name: "Step 19 --- Verification to make sure the catbundle spool file doesn't have any errors"
+      shell: cat '{{ item }}'
+      args:
+        chdir: '$ORACLE_BASE/cfgtoollogs/catbundle'
+      with_items:
+        - '{{ generate_verification.stdout_lines | default([])}}'
+  when: "oracle_binary_version | splitVersion == '11'"
+  tags:
+    - post
+    
+- name: "Step 20 --- Log into the database using sqlplus to run utlrp - this recompiles invalid objects if any in the database"
+  copy:
+    src: utlrpStep20.sh
+    dest: '{{ ansible_patches_dir }}' 
+    mode: "u+rwx,g+rwx,o+rwx"
+    owner: oracle
+  tags:
+    - post
+
+- name: "Step 20 --- Log into the database using sqlplus to run utlrp - this recompiles invalid objects if any in the database" 
+  command: /bin/bash '{{ ansible_patches_dir }}/utlrpStep20.sh'
+  args:
+    chdir: '{{ oracle_home_path }}/rdbms/admin'
+  tags:
+    - post
+
+- name: "Steps 21 + 22--- Run the Invalid objects check and compare to make sure the results are same from before and after patching. Run script and verify list of privileges to UTL packages is ok"
+  copy:
+    src: invalidPrivsStep21_22.sh
+    dest: '{{ ansible_patches_dir }}'
+    mode: "u+rwx,g+rwx,o+rwx"
+    owner: oracle
+  tags:
+    - post
+
+- name: "Steps 21 + 22--- Run the Invalid objects check and compare to make sure the results are same from before and after patching. Run script and verify list of privileges to UTL packages is ok"
+  command: /bin/bash '{{ ansible_patches_dir }}/invalidPrivsStep21_22.sh'
+  args:
+    chdir: '/opt/ora/app/oracle/admin/$ORACLE_SID/adhoc'
+  tags:
+    - post
+
+- name: "Step 23 --- Verify there are no differences in invalid objects"
+  command: 'diff before_invalid_objects.lst after_invalid_objects.lst' 
+  args:
+    chdir: '/opt/ora/app/oracle/admin/$ORACLE_SID/adhoc' 
+  tags:
+    - post
+
+- name: "Step 24 --- Verify there are no differences to utl privileges"
+  command: 'diff before_utl_privs.lst after_utl_privs.lst'
+  register: diffPrivs
+  args:
+    chdir: '/opt/ora/app/oracle/admin/$ORACLE_SID/adhoc'
+  tags:
+    - post
+ 
+#How to determine if on a Unix Mod Cluster
+#- block:
+#  - name: "Step 25a --- Shutdown and restart database if on Unix Mod Cluster"
+#    command: '/home/oracle/lbin/restart_cls_db.sh $ORACLE_SID'
+#  - name: "Step 26 --- Unfreeze Database in Cluster (UNIX SYSADMIN works on unfreezing the cluster if the databases and listeners are running on Veritas Cluster . the freeze/unfreeze scripts and run should be optional"
+#    command: '/home/oracle/lbin/unfreeze_cluster.sh $ORACLE_SID'
+#  when: '{{ vcs_cluster }} == True'
+#  tags:
+#    - post
